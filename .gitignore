@@ -1,0 +1,8 @@
+expect-test
+test_dir
+.DS_Store
+tig.ipynb
+my_tig.ipynb
+__pycache__
+api/__pycache__
+venv
