@@ -14,6 +14,12 @@ class Git():
             b"tag": GitTag,
             b"blob": GitBlob
         }
+        self.mode_mapping = {
+            b"04": "tree",
+            b"10": "blob",
+            b"12": "blob",
+            b"16": "commit"
+        }
 
     def init(self):
         self.db.set("/.git", None)
@@ -31,6 +37,21 @@ class Git():
 
     def rm(self):
         pass
+
+    def ls_tree(self, ref, recursive=False, prefix_path=""):
+        sha = self._resolve_reference("/.git/refs", ref)
+        tree_obj = self._read_object(sha)
+
+        for node in tree_obj.data:
+            mode, path, sha = node
+            obj_type = self.mode_mapping[mode[:2]]
+            print(f"{mode} {obj_type} {sha} {os.path.join(prefix_path, path)}")
+
+            if recursive and obj_type == "tree":
+                self.ls_tree(sha, recursive=recursive, prefix_path=path)
+
+
+
 
     def checkout(self, commit, working_dir_path):
         """
@@ -120,21 +141,18 @@ class Git():
         
         data = self.db.get(ref_path).strip()
         if data.startswith("ref: "):
-            return self._resolve_reference(data[5:])
+            return self._resolve_reference("/.git", data[5:])
         else:
             return data
         
     def _get_all_references(self, path, acc):
         refs = self.db.get(path)
         for ref in refs:
+            ref_path = os.path.join(path, ref)
             if self.db.is_folder(ref_path):
-                ref_path = os.path.join(path, ref)
                 self._get_all_references(ref_path, acc=acc)
             else:
-                acc[ref] = self._resolve_reference(path, ref)
-                
-
-        
+                acc[ref_path] = self._resolve_reference(path, ref)
 
 
 
@@ -182,6 +200,8 @@ It's a hash of a hash, as I understand it right now.
 
 Refs can also refer to other refs. (A pointer to a pointer.)
 e.g. ref: refs/remotes/origin/master
+
+Stashes are tags too??
 """
 
 class GitTag(GitObject):
@@ -211,6 +231,4 @@ if __name__ == "__main__":
     homeDir = "/Users/hwjeon/Documents/PROJECTS/tig/tests/git_db.json"
     git = Git(homeDir)
 
-    git.init()
-    blob = GitBlob("hello world")
-    git._write_object(blob)
+    git.show_ref()

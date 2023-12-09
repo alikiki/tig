@@ -54,7 +54,7 @@ class JsonDatabase():
         
     def is_folder(self, path):
         data = self.get(path)
-        return isinstance(data, list)
+        return isinstance(data, dict)
         
     def is_file(self, path):
         return not self.is_folder(path)
