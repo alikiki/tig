@@ -73,3 +73,4 @@ def write_tree(data):
     ordered_tree = data.sort(key=_order_fn)
     return b"".join(write_tree_node(node) for node in ordered_tree)
 
+    

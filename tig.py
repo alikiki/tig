@@ -29,6 +29,9 @@ class Git():
     def add(self, paths):
         pass
 
+    def rm(self):
+        pass
+
     def checkout(self, commit, working_dir_path):
         """
         Updates working directory with information inside the commit
@@ -71,6 +74,13 @@ class Git():
             else:
                 self.db.set(dest, obj.data)
 
+    def show_ref(self):
+        ref_data = {}
+        self._get_all_references("/.git/refs", ref_data)
+        for ref, sha in ref_data.items():
+            print(f"{sha} {ref}")
+
+
     def _read_object(self, sha):
         try:
             data = self.db.get(f"/.git/objects/{sha[:2]}/{sha[2:]}")
@@ -102,6 +112,30 @@ class Git():
 
         self.db.set(f"/.git/objects/{sha[:2]}/", None)
         self.db.set(f"/.git/objects/{sha[:2]}/{sha[2:]}", compressedData)
+
+    def _resolve_reference(self, path, ref):
+        ref_path = os.path.join(path, ref)
+        if self.db.is_folder(ref_path):
+            return None
+        
+        data = self.db.get(ref_path).strip()
+        if data.startswith("ref: "):
+            return self._resolve_reference(data[5:])
+        else:
+            return data
+        
+    def _get_all_references(self, path, acc):
+        refs = self.db.get(path)
+        for ref in refs:
+            if self.db.is_folder(ref_path):
+                ref_path = os.path.join(path, ref)
+                self._get_all_references(ref_path, acc=acc)
+            else:
+                acc[ref] = self._resolve_reference(path, ref)
+                
+
+        
+
 
 
 class GitObject():
@@ -141,6 +175,14 @@ class GitTree(GitObject):
 
     def deserialize(self, data):
         return read_tree(data)
+
+"""
+Git references are text files containing hexadecimal representation of an object's hash, encoded in ASCII.
+It's a hash of a hash, as I understand it right now.
+
+Refs can also refer to other refs. (A pointer to a pointer.)
+e.g. ref: refs/remotes/origin/master
+"""
 
 class GitTag(GitObject):
     def __init__(self, data):

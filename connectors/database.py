@@ -51,3 +51,23 @@ class JsonDatabase():
     def show(self):
         with open(self.main, "r") as f:
             return json.load(f)
+        
+    def is_folder(self, path):
+        data = self.get(path)
+        return isinstance(data, list)
+        
+    def is_file(self, path):
+        return not self.is_folder(path)
+    
+    def get_type(self, path):
+        return "folder" if self.is_folder(path) else "file"
+
+class FileDatabase():
+    def __init__(self, main):
+        self.main = main
+
+    def get(self, path):
+        raise NotImplementedError
+    
+    def set(self, path, value, overwrite=False):
+        raise NotImplementedError
