@@ -2,8 +2,8 @@ import os
 import gzip
 import zlib
 import hashlib
-from collections import OrderedDict
-from api.database import JsonDatabase
+from utils import kvlm_read, kvlm_write, read_tree, write_tree
+from connectors.database import JsonDatabase
 
 class Git():
     def __init__(self, homeDir):
@@ -29,8 +29,47 @@ class Git():
     def add(self, paths):
         pass
 
-    def checkout(self, branch):
-        pass
+    def checkout(self, commit, working_dir_path):
+        """
+        Updates working directory with information inside the commit
+
+        commit: sha-1 hash
+        working_dir: path to an EMPTY directory 
+        """
+
+        """
+        COMMIT FORMAT:
+        tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147
+        parent 206941306e8a8af65b66eaaaea388a7ae24d49a0
+        author Thibault Polge <thibault@thb.lt> 1527025023 +0200
+        committer Thibault Polge <thibault@thb.lt> 1527025044 +0200
+        gpgsig ...some PGP signature...
+
+        Create first draft
+        """
+
+        commit_obj = self._read_object(commit)
+        if commit_obj.fmt != "commit":
+            raise Exception(f"The chosen git object is not a commit; it is a {commit_obj.fmt}. Please choose a git object that is a commit.")
+        
+        working_dir = self.db.get(working_dir_path)
+        if (not isinstance(working_dir, list)) or (not working_dir):
+            raise Exception(f"The working directory located at {working_dir_path} is not empty.")
+        
+        tree_obj = commit_obj.data["tree"]
+        traversal_queue = [tree_obj]
+
+        # needs to be DFS, otherwise there might not be a folder to add to
+        while traversal_queue:
+            curr_node = traversal_queue.pop()
+            obj = self._read_object(curr_node.sha)
+            dest = os.path.join(working_dir_path, curr_node.path)
+
+            if obj.fmt == "tree":
+                self.db.set(dest, None)
+                traversal_queue.extend(obj.data)
+            else:
+                self.db.set(dest, obj.data)
 
     def _read_object(self, sha):
         try:
@@ -67,6 +106,11 @@ class Git():
 
 class GitObject():
     def __init__(self, data):
+        # FIXME
+        # actually i don't like this because it doesn't make it explicit what is happening when you initialize the data
+        # it might be annoying, but at least it's explicit when you call deserialize that you're setting self.data to something
+
+        # like, why even have the deserialize be public if the user is never goign to call it anyway..? 
         self.data = self.deserialize(data)
 
     def serialize(self):
@@ -75,17 +119,17 @@ class GitObject():
     def deserialize(self, data):
         raise Exception("Not implemented")
 
-    
+
 class GitCommit(GitObject):
     def __init__(self, data):
         super().__init__(data)
         self.fmt: str = "commit"
 
     def serialize(self):
-        pass
+        return kvlm_write(self.data)
 
     def deserialize(self, data):
-        pass
+        return kvlm_read(data)
     
 class GitTree(GitObject):
     def __init__(self, data):
@@ -93,10 +137,10 @@ class GitTree(GitObject):
         self.fmt = "tree"
 
     def serialize(self):
-        pass
+        return write_tree(self.data)
 
     def deserialize(self, data):
-        pass
+        return read_tree(data)
 
 class GitTag(GitObject):
     def __init__(self, data):
@@ -119,27 +163,6 @@ class GitBlob(GitObject):
 
     def deserialize(self, data):
         return data
-
-
-def kvlm_read(kvlm):
-    parsed_kvlm = OrderedDict()
-
-    start, pos = 0, 0
-    while start < len(kvlm):
-        spc = kvlm.find(b" ", start)
-        newline = kvlm.find(b"\n", start)
-
-        if (spc < 0) or (newline < spc):
-            assert newline == start
-            parsed_kvlm[None] = kvlm[(start+1):]
-            return parsed_kvlm
-    
-        key = kvlm[start:spc]
-        while kvlm[pos+1] != ord(' '):
-            break
-
-def kvlm_write(kvlm):
-    pass
 
 
 if __name__ == "__main__":

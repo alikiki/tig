@@ -1,10 +1,10 @@
-import api.database
+import connectors.database
 import unittest
 
 class TestAPI(unittest.TestCase):
     def setUp(self):
         self.path = "/Users/hwjeon/Documents/PROJECTS/tig/tests/git_db.json"
-        self.db = api.database.JsonDatabase(self.path)
+        self.db = connectors.database.JsonDatabase(self.path)
 
     def test_get1(self):
         self.assertEqual(
