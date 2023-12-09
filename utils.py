@@ -7,8 +7,20 @@ def kvlm_read(kvlm):
         return {}
     
     parsed_kvlm = OrderedDict()
-    lines = [l for l in kvlm.split("\n") if l]
-    split_lines = [l.split(" ", 1) for l in lines]
+    lines = kvlm.split("\n")
+    if not lines[0]:
+        lines = lines[1:]
+    if not lines[-1]:
+        lines = lines[:-1]
+
+    # iterate through until you hit an empty string
+    split_lines = []
+    line_num = 0
+    while lines[line_num]:
+        split_lines.append(lines[line_num].split(" ", 1))
+        line_num += 1
+
+    # add the kvlm information 
     try:
         key_to_add = ""
         for key, value in split_lines:
@@ -17,6 +29,14 @@ def kvlm_read(kvlm):
             parsed_kvlm[key_to_add] = parsed_kvlm.get(key_to_add, []) + [value]
     except Exception as e:
         raise Exception(f"Parsing error: {e}")
+
+    # iterate through until you hit a non-empty string
+    while not lines[line_num]:
+        line_num += 1
+
+    # this non-empty string is the message
+    parsed_kvlm[None] = lines[line_num] 
+
     
     return parsed_kvlm
         
@@ -72,5 +92,3 @@ def write_tree_node(node):
 def write_tree(data):
     ordered_tree = data.sort(key=_order_fn)
     return b"".join(write_tree_node(node) for node in ordered_tree)
-
-    
