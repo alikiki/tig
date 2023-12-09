@@ -231,4 +231,6 @@ if __name__ == "__main__":
     homeDir = "/Users/hwjeon/Documents/PROJECTS/tig/tests/git_db.json"
     git = Git(homeDir)
 
-    git.show_ref()
+    commit = "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent 206941306e8a8af65b66eaaaea388a7ae24d49a0\nauthor Thibault Polge <thibault@thb.lt> 1527025023 +0200\n\nthis is a message from the future"
+    commit_obj = GitCommit(commit)
+    print(commit_obj.data)

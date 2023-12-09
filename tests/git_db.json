@@ -15,5 +15,6 @@
             "some_ref": "95d09f2b10159347eece71399a7e2e907ea3df4f",
             "some_other_ref": "95009f2b10159347eece71399a7e2e907ea3df4f"
         }
-    }
+    },
+    "working_dir": {}
 }
