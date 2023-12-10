@@ -54,10 +54,10 @@ def kvlm_write(kv):
 
 def read_tree_node(data, start=0):
     mode_sep_pos = data.find(b' ', start)
-    if mode_sep_pos < 5:
-        raise Exception(f"Mode must be longer than 5 bytes. Your mode is only {mode_sep_pos} long.")
-    elif mode_sep_pos > 6:
-        raise Exception(f"Mode must be shorter than 6 bytes. Your mode is only {mode_sep_pos} long.")
+    if mode_sep_pos - start < 5:
+        raise Exception(f"Mode must be longer than 5 bytes. Your mode is only {mode_sep_pos} bytes long.")
+    elif mode_sep_pos - start > 6:
+        raise Exception(f"Mode must be shorter than 6 bytes. Your mode is {mode_sep_pos} bytes long.")
     
     _mode = data[start:mode_sep_pos]
     mode = b" " + _mode if mode_sep_pos == 5 else _mode
@@ -74,6 +74,7 @@ def read_tree_node(data, start=0):
 def read_tree(data):
     curr_pos = 0
     tree = []
+
     while curr_pos < len(data):
         new_pos, tree_node = read_tree_node(data, start=curr_pos)
         curr_pos = new_pos

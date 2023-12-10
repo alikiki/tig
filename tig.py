@@ -88,11 +88,12 @@ class Git():
             raise Exception(f"The chosen git object is not a commit; it is a {commit_obj.fmt}. Please choose a git object that is a commit.")
         
         working_dir = self.db.get(working_dir_path)
-        if (not isinstance(working_dir, dict)) or (not working_dir):
+        if (not isinstance(working_dir, dict)) or (working_dir):
             raise Exception(f"The working directory located at {working_dir_path} is not empty.")
         
-        tree_obj = commit_obj.data["tree"]
-        traversal_queue = [tree_obj]
+        tree_obj = self._read_object(commit_obj.data["tree"][0])
+        traversal_queue = []
+        traversal_queue.extend(tree_obj.data)
 
         # needs to be DFS, otherwise there might not be a folder to add to
         while traversal_queue:
@@ -104,7 +105,7 @@ class Git():
                 self.db.set(dest, None)
                 traversal_queue.extend(obj.data)
             else:
-                self.db.set(dest, obj.data)
+                self.db.set(dest, obj.data.decode(), no_encoding=True)
 
     def create_ref(self, path, name, sha):
         self.db.set(os.path.join("/.git/refs", path), None)
@@ -268,7 +269,8 @@ class GitTree(GitObject):
             mode_str = node.mode.encode()
             path_str = node.path.encode()
             sha_str = int(node.sha, 16).to_bytes(20, byteorder="big")
-            flattened_tree.append(mode_str + b" " + path_str + b'\x00' + sha_str)
+            byte_str = mode_str + b' ' + path_str + b'\x00' + sha_str
+            flattened_tree.append(byte_str)
 
         return b"".join(flattened_tree)
 
@@ -279,7 +281,7 @@ class GitTree(GitObject):
         return read_tree(data)
 
 """
-Git references are text files containing hexadecimal representation of an object's hash, encoded in ASCII.
+Git references are text files containing hexadecimal reprsentation of an object's hash, encoded in ASCII.
 It's a hash of a hash, as I understand it right now.
 
 Refs can also refer to other refs. (A pointer to a pointer.)
@@ -289,7 +291,7 @@ Stashes are tags too??
 """
 
 class GitTag(GitCommit):
-    def __init__(self, data):
+    def __init__(self, data=None):
         super().__init__(data)
         self.fmt = "tag"
 
