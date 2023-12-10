@@ -1,18 +1,30 @@
 import re
 import os
 import hashlib
-from utils import kvlm_read, kvlm_write, read_tree, write_tree
+from utils import kvlm_read, kvlm_write, read_tree, tree_order_fn
 from connectors.database import JsonDatabase
 
+"""
+b"" means that the string is stored as a sequence of bytes. 
+"" means that the string is stored as a sequence of Unicode code points. 
+"""
+
 class Git():
+    """
+    Anything that deals with anything external should deal with BYTES.
+    """
     def __init__(self, homeDir):
         self.db = JsonDatabase(homeDir)
+
+        # BYTES because converts external -> internal rep
         self.obj_mapping = {
             b"commit": GitCommit,
             b"tree": GitTree,
             b"tag": GitTag,
             b"blob": GitBlob
         }
+
+        # BYTES because converts external -> internal rep
         self.mode_mapping = {
             b"04": "tree",
             b"10": "blob",
@@ -95,16 +107,17 @@ class Git():
                 self.db.set(dest, obj.data)
 
     def create_ref(self, path, name, sha):
-        self.db.set(os.path.join("/.git/refs", path, name), sha)
+        self.db.set(os.path.join("/.git/refs", path), None)
+        self.db.set(os.path.join("/.git/refs", path, name), sha.encode())
 
     def create_tag(self, path, name, ref, create_tag_object=False):
         obj_sha = self._resolve_reference("/.git/refs", ref)
         if create_tag_object:
             tag_obj = GitTag()
             tag_obj.data = {
-                b"tag": name.encode(),
-                b"type": b"commit",
-                b"object": obj_sha.encode(),
+                "tag": name,
+                "type": "commit",
+                "object": obj_sha,
                 None: "Some tag object"
             }
             tag_obj_sha = self._write_object(tag_obj)
@@ -128,7 +141,6 @@ class Git():
         
         candidates = [] # accumulate object hashes
         hash_regex = re.compile(r"^[0-9A-Fa-f]{4,40}$")
-
         if hash_regex.match(name):
             head = name[:2]
             tail = name[2:]
@@ -158,44 +170,38 @@ class Git():
         found_object = self._read_object(found_hash)
         if found_object.fmt == fmt:
             return found_object
-        if found_object.fmt == b"tag":
-            return self._read_object(found_object.data[b"object"])
-        if found_object.fmt == b"commit":
-            return self._read_object(found_object.data[b"tree"])
-        
+        if found_object.fmt == "tag":
+            return self._read_object(found_object.data["object"])
+        if found_object.fmt == "commit":
+            return self._read_object(found_object.data["tree"])
 
 
     def _read_object(self, sha):
         try:
             data = self.db.get(f"/.git/objects/{sha[:2]}/{sha[2:]}")
-            data = self.db.deserialize_data(data)
         except Exception as e:
             raise Exception(f"Object {sha} not found in database.")
     
         fmt_sep = data.find(b" ")
-        fmt = data[:fmt_sep]
-        print(f"fmt: {fmt}")
-        print(f"fmt sep: {fmt_sep}")
+        fmt = data[:fmt_sep] # BYTES
 
         size_sep = data.find(b"\x00", fmt_sep)
         size = int(data[fmt_sep:size_sep].decode("ascii"))
-        print(f"size: {size}")
-        print(f"size sep: {size_sep}")
 
         return self.obj_mapping[fmt](data[size_sep+1:])
 
     def _write_object(self, obj):
+        # encoding from UNICODE --> BYTES
         fmt = obj.fmt.encode()
-        content = obj.serialize().encode()
+        content = obj.serialize()
         size = str(len(content)).encode()
 
         data_bytes = fmt + b' ' + size + b'\x00' + content
-        compressedData = self.db.serialize_data(data_bytes)
 
         sha = hashlib.sha1(data_bytes).hexdigest()
 
         self.db.set(f"/.git/objects/{sha[:2]}/", None)
-        self.db.set(f"/.git/objects/{sha[:2]}/{sha[2:]}", compressedData)
+        self.db.set(f"/.git/objects/{sha[:2]}/{sha[2:]}", data_bytes)
 
         return sha
 
@@ -204,7 +210,7 @@ class Git():
         if self.db.is_folder(ref_path):
             return None
         
-        data = self.db.get(ref_path).strip()
+        data = self.db.get(ref_path).strip().decode()
         if data.startswith("ref: "):
             return self._resolve_reference("/.git", data[5:])
         else:
@@ -222,7 +228,7 @@ class Git():
 
 
 class GitObject():
-    def __init__(self, data):
+    def __init__(self, data=None):
         # FIXME
         # actually i don't like this because it doesn't make it explicit what is happening when you initialize the data
         # it might be annoying, but at least it's explicit when you call deserialize that you're setting self.data to something
@@ -238,9 +244,9 @@ class GitObject():
 
 
 class GitCommit(GitObject):
-    def __init__(self, data):
+    def __init__(self, data=None):
         super().__init__(data)
-        self.fmt: str = "commit"
+        self.fmt = "commit"
 
     def serialize(self):
         return kvlm_write(self.data)
@@ -251,12 +257,21 @@ class GitCommit(GitObject):
         return kvlm_read(data)
     
 class GitTree(GitObject):
-    def __init__(self, data):
+    def __init__(self, data=None):
         super().__init__(data)
         self.fmt = "tree"
 
     def serialize(self):
-        return write_tree(self.data)
+        ordered_tree = sorted(self.data, key=tree_order_fn)
+        flattened_tree = []
+        for node in ordered_tree:
+            mode_str = node.mode.encode()
+            path_str = node.path.encode()
+            sha_str = int(node.sha, 16).to_bytes(20, byteorder="big")
+            flattened_tree.append(mode_str + b" " + path_str + b'\x00' + sha_str)
+
+        return b"".join(flattened_tree)
+
 
     def deserialize(self, data):
         if data is None:
@@ -284,7 +299,7 @@ class GitBlob(GitObject):
         self.fmt = "blob"
 
     def serialize(self):
-        return self.data
+        return self.data.encode()
 
     def deserialize(self, data):
         return data
@@ -294,6 +309,5 @@ if __name__ == "__main__":
     homeDir = "/Users/hwjeon/Documents/PROJECTS/tig/tests/git_db.json"
     git = Git(homeDir)
 
-    commit = "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent 206941306e8a8af65b66eaaaea388a7ae24d49a0\nauthor Thibault Polge <thibault@thb.lt> 1527025023 +0200\n\nthis is a message from the future"
-    commit_obj = GitCommit(commit)
-    print(commit_obj.data)
+    blob = GitBlob("what's up my brudda")
+    git._write_object(blob)

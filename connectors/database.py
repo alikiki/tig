@@ -1,6 +1,10 @@
 import os
 import json
 
+"""
+Because the main `tig.py` deals with bytes instead of strings, this file is responsible for the encoding/decoding schemes. 
+"""
+
 class JsonDatabase():
     def __init__(self, main):
         self.main = main
@@ -15,7 +19,7 @@ class JsonDatabase():
                 except KeyError:
                     raise KeyError(f"Search stopped at {component} in {path[:i+1]}")
                 
-        return data
+        return self._deserialize_data(data)
 
     def _get(self, key: str, store: dict):
         try:
@@ -35,16 +39,16 @@ class JsonDatabase():
                 if path[-1] in data:
                     return
             
-            data[path[-1]] = {} if value is None else value
+            data[path[-1]] = {} if value is None else self._serialize_data(value)
         
         with open(self.main, "w") as f:
             json.dump(full_data, f)
         return full_data
     
-    def serialize_data(self, data):
+    def _serialize_data(self, data):
         return data.decode('utf-8') 
     
-    def deserialize_data(self, data):
+    def _deserialize_data(self, data):
         return data.encode('utf-8')
                 
     
@@ -61,6 +65,10 @@ class JsonDatabase():
     
     def get_type(self, path):
         return "folder" if self.is_folder(path) else "file"
+    
+    def clear(self):
+        with open(self.main, "w") as f:
+            json.dump({}, f)
 
 class FileDatabase():
     def __init__(self, main):
