@@ -42,10 +42,12 @@ def kvlm_read(kvlm):
         
 
 def kvlm_write(kv):
-    kv.update({k: [v] for k, v in kv.items() if not isinstance(v, list)})
-    stringified = {k: "\n ".join(v) for k, v in kv.items()}
+    named_fields = {k: v for k, v in kv.items() if k is not None}
+    msg = kv[None]
+    named_fields.update({k: [v] for k, v in named_fields.items() if not isinstance(v, list)})
+    stringified = {k: "\n ".join(v) for k, v in named_fields.items()}
     stringified_list = [f"{k} {v}" for k, v in stringified.items()]
-    return "\n".join(stringified_list) + "\n"
+    return "\n".join(stringified_list) + "\n\n" + msg.strip()
 
 def read_tree_node(data, start=0):
     mode_sep_pos = data.find(b' ', start)
@@ -92,3 +94,9 @@ def write_tree_node(node):
 def write_tree(data):
     ordered_tree = data.sort(key=_order_fn)
     return b"".join(write_tree_node(node) for node in ordered_tree)
+
+print(kvlm_read(kvlm_write({
+    "hello": "doctor",
+    "goodbye": ["mother", "father", "sister"],
+    None: "Something else is here"
+})))

@@ -1,6 +1,5 @@
+import re
 import os
-import gzip
-import zlib
 import hashlib
 from utils import kvlm_read, kvlm_write, read_tree, write_tree
 from connectors.database import JsonDatabase
@@ -77,7 +76,7 @@ class Git():
             raise Exception(f"The chosen git object is not a commit; it is a {commit_obj.fmt}. Please choose a git object that is a commit.")
         
         working_dir = self.db.get(working_dir_path)
-        if (not isinstance(working_dir, list)) or (not working_dir):
+        if (not isinstance(working_dir, dict)) or (not working_dir):
             raise Exception(f"The working directory located at {working_dir_path} is not empty.")
         
         tree_obj = commit_obj.data["tree"]
@@ -95,11 +94,75 @@ class Git():
             else:
                 self.db.set(dest, obj.data)
 
+    def create_ref(self, path, name, sha):
+        self.db.set(os.path.join("/.git/refs", path, name), sha)
+
+    def create_tag(self, path, name, ref, create_tag_object=False):
+        obj_sha = self._resolve_reference("/.git/refs", ref)
+        if create_tag_object:
+            tag_obj = GitTag()
+            tag_obj.data = {
+                b"tag": name.encode(),
+                b"type": b"commit",
+                b"object": obj_sha.encode(),
+                None: "Some tag object"
+            }
+            tag_obj_sha = self._write_object(tag_obj)
+            self.create_ref(path, name, tag_obj_sha)
+        else:
+            self.create_ref(path, name, obj_sha)
+
+    def create_branch(self, name):
+        self.create_tag("heads", name, "heads/main", create_tag_object=False)
+
+
     def show_ref(self):
         ref_data = {}
         self._get_all_references("/.git/refs", ref_data)
         for ref, sha in ref_data.items():
             print(f"{sha} {ref}")
+
+    def _find_hashes(self, name):
+        if not name:
+            return []
+        
+        candidates = [] # accumulate object hashes
+        hash_regex = re.compile(r"^[0-9A-Fa-f]{4,40}$")
+
+        if hash_regex.match(name):
+            head = name[:2]
+            tail = name[2:]
+            obj_candidates = self.db.get(f"/.git/objects/{head}")
+            for t in obj_candidates.keys():
+                if t.startswith(tail):
+                    candidates.append(head + t)
+        else:
+            tag_candidate = self._resolve_reference("/.git/refs/tags", name)
+            commit_candidate = self._resolve_reference("/.git/refs/heads", name)
+
+            if tag_candidate:
+                candidates.append(tag_candidate)
+            if commit_candidate:
+                candidates.append(commit_candidate)
+
+        return candidates
+
+    def _find_object(self, name, fmt=None):
+        hashes = self._find_hashes(name)
+        if not hashes:
+            raise Exception(f"No hashes associated to {name} were found")
+        if len(hashes) > 1:
+            raise Exception(f"{name} refers to multiple hashes: {hashes}")
+        
+        found_hash = hashes[0]
+        found_object = self._read_object(found_hash)
+        if found_object.fmt == fmt:
+            return found_object
+        if found_object.fmt == b"tag":
+            return self._read_object(found_object.data[b"object"])
+        if found_object.fmt == b"commit":
+            return self._read_object(found_object.data[b"tree"])
+        
 
 
     def _read_object(self, sha):
@@ -133,6 +196,8 @@ class Git():
 
         self.db.set(f"/.git/objects/{sha[:2]}/", None)
         self.db.set(f"/.git/objects/{sha[:2]}/{sha[2:]}", compressedData)
+
+        return sha
 
     def _resolve_reference(self, path, ref):
         ref_path = os.path.join(path, ref)
@@ -181,6 +246,8 @@ class GitCommit(GitObject):
         return kvlm_write(self.data)
 
     def deserialize(self, data):
+        if data is None:
+            return {}
         return kvlm_read(data)
     
 class GitTree(GitObject):
@@ -192,6 +259,8 @@ class GitTree(GitObject):
         return write_tree(self.data)
 
     def deserialize(self, data):
+        if data is None:
+            return []
         return read_tree(data)
 
 """
@@ -204,16 +273,10 @@ e.g. ref: refs/remotes/origin/master
 Stashes are tags too??
 """
 
-class GitTag(GitObject):
+class GitTag(GitCommit):
     def __init__(self, data):
         super().__init__(data)
         self.fmt = "tag"
-
-    def serialize(self):
-        pass
-
-    def deserialize(self, data):
-        pass
 
 class GitBlob(GitObject):
     def __init__(self, data):
