@@ -112,7 +112,7 @@ class Git():
         self.db.set(os.path.join("/.git/refs", path, name), sha.encode())
 
     def create_tag(self, path, name, ref, create_tag_object=False):
-        obj_sha = self._resolve_reference("/.git/refs", ref)
+        obj_sha = self._find_object(ref)
         if create_tag_object:
             tag_obj = GitTag()
             tag_obj.data = {
@@ -127,7 +127,7 @@ class Git():
             self.create_ref(path, name, obj_sha)
 
     def create_branch(self, name):
-        self.create_tag("heads", name, "heads/main", create_tag_object=False)
+        self.create_tag("heads", name, "main", create_tag_object=False)
 
 
     def show_ref(self):
@@ -150,13 +150,16 @@ class Git():
                 if t.startswith(tail):
                     candidates.append(head + t)
         else:
-            tag_candidate = self._resolve_reference("/.git/refs/tags", name)
-            commit_candidate = self._resolve_reference("/.git/refs/heads", name)
+            try:
+                tag_candidate = self._resolve_reference("/.git/refs/tags", name)
+                if tag_candidate:
+                    candidates.append(tag_candidate)
 
-            if tag_candidate:
-                candidates.append(tag_candidate)
-            if commit_candidate:
-                candidates.append(commit_candidate)
+                commit_candidate = self._resolve_reference("/.git/refs/heads", name)
+                if commit_candidate:
+                    candidates.append(commit_candidate)
+            except:
+                pass
 
         return candidates
 
@@ -169,12 +172,13 @@ class Git():
         
         found_hash = hashes[0]
         found_object = self._read_object(found_hash)
-        if found_object.fmt == fmt:
-            return found_object
         if found_object.fmt == "tag":
-            return self._read_object(found_object.data["object"])
+            return found_object.data["object"][0]
         if found_object.fmt == "commit":
-            return self._read_object(found_object.data["tree"])
+            return found_object.data["tree"][0]
+        if (fmt is None) or (found_object.fmt == fmt):
+            return found_hash
+        
 
 
     def _read_object(self, sha):
@@ -305,11 +309,3 @@ class GitBlob(GitObject):
 
     def deserialize(self, data):
         return data
-
-
-if __name__ == "__main__":
-    homeDir = "/Users/hwjeon/Documents/PROJECTS/tig/tests/git_db.json"
-    git = Git(homeDir)
-
-    blob = GitBlob("what's up my brudda")
-    git._write_object(blob)
