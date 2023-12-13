@@ -1,3 +1,4 @@
+import math
 import re
 import os
 import hashlib
@@ -135,6 +136,7 @@ class Git():
         self._get_all_references("/.git/refs", ref_data)
         for ref, sha in ref_data.items():
             print(f"{sha} {ref}")
+
 
     def _find_hashes(self, name):
         if not name:
@@ -284,16 +286,6 @@ class GitTree(GitObject):
             return []
         return read_tree(data)
 
-"""
-Git references are text files containing hexadecimal reprsentation of an object's hash, encoded in ASCII.
-It's a hash of a hash, as I understand it right now.
-
-Refs can also refer to other refs. (A pointer to a pointer.)
-e.g. ref: refs/remotes/origin/master
-
-Stashes are tags too??
-"""
-
 class GitTag(GitCommit):
     def __init__(self, data=None):
         super().__init__(data)
@@ -309,3 +301,147 @@ class GitBlob(GitObject):
 
     def deserialize(self, data):
         return data
+
+class GitIndexEntry():
+    """
+    HEADER (12 bytes):
+        SIGNATURE (4 bytes): "DIRC" in ASCII
+        VERSION (4 bytes): enum(2, 3, 4)
+        NUMBER OF INDEX ENTRIES (4 bytes)
+
+    SORTED INDEX ENTRIES
+
+    EXTENSIONS
+
+    HASH CHECKSUM
+    """
+    def __init__(self, 
+                 ctime=None, mtime=None, dev=None, ino=None, mode_type=None, 
+                 mode_perms=None, uid=None, gid=None, fsize=None, sha=None, 
+                 flag_assume_valid=None, flag_stage=None, name=None):
+        self.ctime = ctime
+        self.mtime = mtime
+        self.dev = dev 
+        self.ino = ino
+        self.mode_type = mode_type
+        self.mode_perms = mode_perms
+        self.uid = uid
+        self.gid = gid
+        self.fsize = fsize
+        self.sha = sha
+        self.flag_assume_valid = flag_assume_valid
+        self.flag_stage = flag_stage
+        self.name = name
+
+class GitIndex():
+    def __init__(self, entries=[]):
+        self.entries = entries
+
+    def read(self, data):
+        if not isinstance(data, bytes):
+            raise Exception("index data must be in bytes")
+        
+        curr_pos = 0
+
+        header = data[(curr_pos):(curr_pos + 12)]
+        curr_pos += 12
+
+        signature = header[:4]
+        version = header[4:8]
+        num_index_entries = int(header[8:])
+
+        if signature != b"DIRC":
+            raise Exception(f"Signature must be \"DIRC\". Instead, it's {signature.decode()}")
+        if version != b"2":
+            raise Exception(f"tig only supports version 2. This is an index file of version {version.decode()}")
+        
+
+        entries = []
+        for _ in range(num_index_entries):
+            ctime_s = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            ctime_ns = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            mtime_s = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            mtime_ns = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            dev = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            ino = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            unused_space = int.from_bytes(data[(curr_pos):(curr_pos + 2)], "big")
+            curr_pos += 2
+
+            if unused_space != 0:
+                raise Exception(f"In the \"mode\" section, the unused bits are not equal to zero; it's equal to {unused_space}")
+            
+            mode = int.from_bytes(data[(curr_pos):(curr_pos + 2)], "big") # total: 16 bits = 2 bytes
+            curr_pos += 2
+
+            mode_type = mode >> 12 # get the first 4 bits
+            if mode_type not in [0b1000, 0b1010, 0b1110]:
+                raise Exception(f"The mode type of this index entry must be '0b1000', '0b1010', or '0b1110'. The given mode type is {bin(mode_type)}")
+            mode_perms = mode & 0b0000000111111111
+
+            uid = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            gid = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            size = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
+            curr_pos += 4
+
+            sha = format(int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big"), "040x")
+            curr_pos += 4
+
+            flags = int.from_bytes(data[(curr_pos):(curr_pos + 2)], "big")
+            curr_pos += 2
+
+            flag_assume_valid = (flags & 0b1000000000000000) != 0 # get the first bit
+            flag_extended = (flags & 0b0100000000000000) != 0 # get the second bit
+            if flag_extended:
+                raise Exception(f"In version 2, the 'extended' flag must be false.")
+            flag_stage = (flags & 0b0011000000000000) # get the third and fourth bits
+            flag_name_length = (flags & 0b0000111111111111) # get the last 12 bits
+
+            if flag_name_length < 0xFFF:
+                if data[(curr_pos + flag_name_length)] != 0x00: # entry path name should be null terminated
+                    raise Exception("The last byte of the entry path name must be null.")
+                entry_path_name = data[(curr_pos):(curr_pos + flag_name_length)]
+                curr_pos += flag_name_length + 1 # 1 extra byte to account for the null terminator at pos `curr_pos + flag_name_length`
+            else:
+                null_pos = data.find(b"\x00", curr_pos + 0xFFF)
+                entry_path_name = data[(curr_pos):(null_pos)]
+                curr_pos = null_pos + 1 # 1 extra byte to account for the null terminator
+
+            name = entry_path_name.decode("utf8")
+            step_through_offset = 8 * math.ceil(curr_pos / 8) # however many bytes to skip to get to the next multiple of 8 bytes
+
+            curr_pos += step_through_offset
+
+            index_entry = GitIndexEntry(
+                ctime = (ctime_s, ctime_ns),
+                mtime = (mtime_s, mtime_ns),
+                dev = dev,
+                ino = ino,
+                mode_type = mode_type,
+                mode_perms = mode_perms,
+                uid = uid,
+                gid = gid,
+                fsize = size,
+                sha = sha,
+                flag_assume_valid = flag_assume_valid,
+                flag_stage = flag_stage,
+                name = name
+            )
+            entries.append(index_entry)
+
+        self.entries = entries

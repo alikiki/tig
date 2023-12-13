@@ -203,3 +203,5 @@ class TestGit(unittest.TestCase):
             raise Exception(e)
         
         self.cleanUp()   
+
+    
