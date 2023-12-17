@@ -202,6 +202,42 @@ class TestGit(unittest.TestCase):
             self.cleanUp()
             raise Exception(e)
         
-        self.cleanUp()   
+        self.cleanUp()  
+
+    def test_find_head(self):
+        try:
+            salutation = tig.GitBlob("hello world")
+            response = tig.GitBlob("whats up boss")
+            salutation_sha = self.git._write_object(salutation)
+            response_sha = self.git._write_object(response)
+
+            tree = tig.GitTree()
+            tree.data = [
+                utils.TreeNode("040000", "salutation.txt", salutation_sha),
+                utils.TreeNode("040000", "response.txt", response_sha),
+            ]
+            tree_sha = self.git._write_object(tree)
+
+            tree_info = f"tree {tree_sha}".encode()
+            author_info = f"author Alex Jeon".encode()
+            committer_info = f"committer Alex Jeon".encode()
+            message = "My first commit!".encode()
+
+            commit = tig.GitCommit(tree_info + b"\n" + author_info + b"\n" + committer_info + b"\n\n" + message)
+            commit_sha = self.git._write_object(commit)
+            self.git.db.set("/.git/HEAD", commit_sha.encode())
+
+            current_branch_sha = self.git._get_current_branch()
+            found_object_sha = self.git._find_object(current_branch_sha)
+
+            self.assertEqual(found_object_sha, tree_sha)
+            
+        except Exception as e:
+            self.cleanUp()
+            raise Exception(e)
+        
+        self.cleanUp()  
+
+             
 
     

@@ -16,6 +16,7 @@ class Git():
     """
     def __init__(self, homeDir):
         self.db = JsonDatabase(homeDir)
+        self.worktree = "working_dir"
 
         # BYTES because converts external -> internal rep
         self.obj_mapping = {
@@ -45,10 +46,21 @@ class Git():
         pass
 
     def add(self, paths):
-        pass
+        # remove the entries that we're going to re-add
+        self.rm(paths)
+        return
+        
 
-    def rm(self):
-        pass
+    def rm(self, paths):
+        index = self._get_index()
+        paths_to_remove = [self.db.abspath(p) for p in paths]
+
+        # TODO: This might not work because e.name might be missing a dash or whatever
+        new_index_entries = [e for e in index.entries if e.name not in paths_to_remove]
+
+        index.entries = new_index_entries
+        index.write()
+
 
     def ls_tree(self, ref, recursive=False, prefix_path=""):
         sha = self._resolve_reference("/.git/refs", ref)
@@ -62,8 +74,17 @@ class Git():
             if recursive and obj_type == "tree":
                 self.ls_tree(sha, recursive=recursive, prefix_path=path)
 
+    def ls_files(self):
+        index = self._get_index()
+        for e in index.entries:
+            print(e.name)
 
+    def _get_index(self):
+        index = self.db.get(".git/index")
+        parsed_index = GitIndex()
+        parsed_index.read(index)
 
+        return parsed_index
 
     def checkout(self, commit, working_dir_path):
         """
@@ -180,8 +201,7 @@ class Git():
             return found_object.data["tree"][0]
         if (fmt is None) or (found_object.fmt == fmt):
             return found_hash
-        
-
+    
 
     def _read_object(self, sha):
         try:
@@ -232,6 +252,13 @@ class Git():
             else:
                 acc[ref_path] = self._resolve_reference(path, ref)
 
+    def _get_current_branch(self):
+        try:
+            head_sha = self._resolve_reference(".git", "HEAD")
+            return head_sha
+        except:
+            return False
+        
 
 
 class GitObject():
@@ -336,6 +363,9 @@ class GitIndexEntry():
 class GitIndex():
     def __init__(self, entries=[]):
         self.entries = entries
+
+    def write(self):
+        pass    
 
     def read(self, data):
         if not isinstance(data, bytes):
@@ -445,3 +475,4 @@ class GitIndex():
             entries.append(index_entry)
 
         self.entries = entries
+

@@ -74,6 +74,9 @@ class JsonDatabase():
         with open(self.main, "w") as f:
             json.dump({}, f)
 
+    def abspath(self, path):
+        return path
+
 class FileDatabase():
     def __init__(self, main):
         self.main = main
