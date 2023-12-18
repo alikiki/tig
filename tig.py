@@ -1,9 +1,29 @@
+"""
+The core features of git:
+1. add 
+2. rm
+    --cached
+3. commit
+4. checkout (DONE)
+5. branch (DONE)
+6. status
+7. merge
+8. init (DONE)
+9. log 
+10. git reset
+
+I'll be 'done' with this project once I have these features.
+
+The features that I don't care about:
+1. ignore rules
+"""
+
 import math
 import re
 import os
 import hashlib
 from utils import kvlm_read, kvlm_write, read_tree, tree_order_fn
-from connectors.database import JsonDatabase
+from connectors.database import JsonDatabase, FileDatabase
 
 """
 b"" means that the string is stored as a sequence of bytes. 
@@ -14,8 +34,8 @@ class Git():
     """
     Anything that deals with anything external should deal with BYTES.
     """
-    def __init__(self, homeDir):
-        self.db = JsonDatabase(homeDir)
+    def __init__(self, homeDir, dbType="json"):
+        self.db = JsonDatabase(homeDir) if dbType == "json" else FileDatabase(homeDir)
         self.worktree = "working_dir"
 
         # BYTES because converts external -> internal rep
@@ -35,35 +55,90 @@ class Git():
         }
 
     def init(self):
-        self.db.set("/.git", None)
-        self.db.set("/.git/objects", None)
-        self.db.set("/.git/refs", None)
-        self.db.set("/.git/refs/heads", None)
-        self.db.set("/.git/refs/tags", None)
-        self.db.set("/.git/objects/pack", None)
+        self.db.set(".git", None)
+        self.db.set(".git/objects", None)
+        self.db.set(".git/refs", None)
+        self.db.set(".git/refs/heads", None)
+        self.db.set(".git/refs/tags", None)
+        self.db.set(".git/objects/pack", None)
+        self._create_index()
 
     def commit(self, msg):
         pass
 
     def add(self, paths):
-        # remove the entries that we're going to re-add
-        self.rm(paths)
-        return
-        
+        index = self._get_index()
+
+        # normalize paths
+        paths_to_add = [self.db.abspath(p) for p in paths]
+        for p in paths_to_add:
+            if not self.db.is_file(p):
+                raise Exception(f"{p} is not a file.")
+            
+        # remove index entries that are already in the index
+        index.entries = [e for e in index.entries if self.db.abspath(e.name) not in paths_to_add]
+
+        # construct relative path equivalents    
+        paths_to_add = [(p, self.db.relpath(p, os.path.join(self.db.main, self.worktree))) for p in paths_to_add]
+
+        for abspath, relpath in paths_to_add:
+            blob = GitBlob(self.db.get(abspath, no_encoding=True))
+            blob_sha = self._write_object(blob)
+
+            stat = self.db.get_metadata(abspath)
+            entry = GitIndexEntry(
+                ctime = stat["ctime"],
+                mtime = stat["mtime"],
+                dev = stat["dev"],
+                ino = stat["ino"],
+                mode_type = stat["mode_type"],
+                mode_perms = stat["mode_perms"],
+                uid = stat["uid"],
+                gid = stat["gid"],
+                fsize = stat["fsize"],
+                sha = blob_sha,
+                flag_assume_valid = False,
+                flag_stage = False,
+                name = relpath
+            )
+
+            index.entries.append(entry)
+
+        new_index = index.write()
+        self.db.set(".git/index", new_index, overwrite=True)
+
 
     def rm(self, paths):
+        """
+        Remember that the paths in the index file are relative paths.
+
+        So when we remove paths from the index, we want to make sure that whichever paths we're removing from the index
+        are actually the paths that we want. 
+
+        You can easily imagine a scenario like:
+        1. Folder 1: test/a.txt
+        2. Folder 2: test/test/a.txt
+
+        Say we are in the first `test` folder (as the current directory).
+
+        Then it's unclear which `a.txt` to remove. 
+
+        Hence we should normalize all paths to ABSOLUTE paths when we remove them from the index.
+        """
         index = self._get_index()
+
+        # normalize paths
         paths_to_remove = [self.db.abspath(p) for p in paths]
 
-        # TODO: This might not work because e.name might be missing a dash or whatever
-        new_index_entries = [e for e in index.entries if e.name not in paths_to_remove]
+        new_index_entries = [e for e in index.entries if self.db.abspath(e.name) not in paths_to_remove]
 
         index.entries = new_index_entries
-        index.write()
+        new_index = index.write()
+        self.db.set(".git/index", new_index, overwrite=True)
 
 
     def ls_tree(self, ref, recursive=False, prefix_path=""):
-        sha = self._resolve_reference("/.git/refs", ref)
+        sha = self._resolve_reference(".git/refs", ref)
         tree_obj = self._read_object(sha)
 
         for node in tree_obj.data:
@@ -80,11 +155,20 @@ class Git():
             print(e.name)
 
     def _get_index(self):
-        index = self.db.get(".git/index")
-        parsed_index = GitIndex()
-        parsed_index.read(index)
+        try:
+            index = self.db.get(".git/index")
+            parsed_index = GitIndex()
+            parsed_index.read(index)
 
-        return parsed_index
+            return parsed_index
+        except Exception as e:
+            print(e)
+            return GitIndex()
+    
+    def _create_index(self):
+        index = GitIndex()
+        bytes_index = index.write()
+        self.db.set(".git/index", bytes_index)
 
     def checkout(self, commit, working_dir_path):
         """
@@ -130,8 +214,8 @@ class Git():
                 self.db.set(dest, obj.data.decode(), no_encoding=True)
 
     def create_ref(self, path, name, sha):
-        self.db.set(os.path.join("/.git/refs", path), None)
-        self.db.set(os.path.join("/.git/refs", path, name), sha.encode())
+        self.db.set(os.path.join(".git/refs", path), None)
+        self.db.set(os.path.join(".git/refs", path, name), sha.encode())
 
     def create_tag(self, path, name, ref, create_tag_object=False):
         obj_sha = self._find_object(ref)
@@ -151,10 +235,9 @@ class Git():
     def create_branch(self, name):
         self.create_tag("heads", name, "main", create_tag_object=False)
 
-
     def show_ref(self):
         ref_data = {}
-        self._get_all_references("/.git/refs", ref_data)
+        self._get_all_references(".git/refs", ref_data)
         for ref, sha in ref_data.items():
             print(f"{sha} {ref}")
 
@@ -168,17 +251,17 @@ class Git():
         if hash_regex.match(name):
             head = name[:2]
             tail = name[2:]
-            obj_candidates = self.db.get(f"/.git/objects/{head}")
+            obj_candidates = self.db.get(f".git/objects/{head}")
             for t in obj_candidates.keys():
                 if t.startswith(tail):
                     candidates.append(head + t)
         else:
             try:
-                tag_candidate = self._resolve_reference("/.git/refs/tags", name)
+                tag_candidate = self._resolve_reference(".git/refs/tags", name)
                 if tag_candidate:
                     candidates.append(tag_candidate)
 
-                commit_candidate = self._resolve_reference("/.git/refs/heads", name)
+                commit_candidate = self._resolve_reference(".git/refs/heads", name)
                 if commit_candidate:
                     candidates.append(commit_candidate)
             except:
@@ -205,7 +288,7 @@ class Git():
 
     def _read_object(self, sha):
         try:
-            data = self.db.get(f"/.git/objects/{sha[:2]}/{sha[2:]}")
+            data = self.db.get(f".git/objects/{sha[:2]}/{sha[2:]}")
         except Exception as e:
             raise Exception(f"Object {sha} not found in database.")
     
@@ -227,8 +310,8 @@ class Git():
 
         sha = hashlib.sha1(data_bytes).hexdigest()
 
-        self.db.set(f"/.git/objects/{sha[:2]}/", None)
-        self.db.set(f"/.git/objects/{sha[:2]}/{sha[2:]}", data_bytes)
+        self.db.set(f".git/objects/{sha[:2]}/", None)
+        self.db.set(f".git/objects/{sha[:2]}/{sha[2:]}", data_bytes)
 
         return sha
 
@@ -239,7 +322,7 @@ class Git():
         
         data = self.db.get(ref_path).strip().decode()
         if data.startswith("ref: "):
-            return self._resolve_reference("/.git", data[5:])
+            return self._resolve_reference(".git", data[5:])
         else:
             return data
         
@@ -360,12 +443,60 @@ class GitIndexEntry():
         self.flag_stage = flag_stage
         self.name = name
 
+    def write(self):
+        entry = b""
+        entry += self.ctime[0].to_bytes(4, "big")
+        entry += self.ctime[1].to_bytes(4, "big")
+        entry += self.mtime[0].to_bytes(4, "big")
+        entry += self.mtime[1].to_bytes(4, "big")
+        entry += self.dev.to_bytes(4, "big")
+        entry += self.ino.to_bytes(4, "big")
+
+        mode = (self.mode_type << 12) | self.mode_perms
+        entry += mode.to_bytes(4, "big")
+        entry += self.uid.to_bytes(4, "big")
+        entry += self.gid.to_bytes(4, "big")
+        entry += self.fsize.to_bytes(4, "big")
+        entry += int(self.sha, 16).to_bytes(20, "big")
+
+        flag_assume_valid = 0x1 << 15 if self.flag_assume_valid else 0x0 << 15
+        name_bytes = self.name.encode("utf8")
+        bytes_len = len(name_bytes)
+
+        if bytes_len >= 0xFFF:
+            name_length = 0xFFF
+        else:
+            name_length = bytes_len
+
+        entry += (flag_assume_valid | self.flag_stage | name_length).to_bytes(2, "big")
+        entry += name_bytes
+        entry += ((0).to_bytes(1, "big"))
+
+        if 62 + len(name_bytes) + 1 % 8 != 0:
+            pad = 8 - ((62 + len(name_bytes) + 1) % 8)
+            entry += ((0).to_bytes(pad, "big"))
+
+        return entry
+
 class GitIndex():
+    """
+    The paths in the index should be RELATIVE paths.
+
+    That way, when we do `git checkout`, git can just place the files into the working directory that we specify.
+    """
     def __init__(self, entries=[]):
         self.entries = entries
+        self.version = 2
 
     def write(self):
-        pass    
+        index_entry = b"DIRC"
+        index_entry += self.version.to_bytes(4, "big")
+        index_entry += len(self.entries).to_bytes(4, "big")
+
+        for e in self.entries:
+            index_entry += e.write()
+
+        return index_entry
 
     def read(self, data):
         if not isinstance(data, bytes):
@@ -377,12 +508,12 @@ class GitIndex():
         curr_pos += 12
 
         signature = header[:4]
-        version = header[4:8]
-        num_index_entries = int(header[8:])
+        version = int.from_bytes(header[4:8], "big")
+        num_index_entries = int.from_bytes(header[8:], "big")
 
         if signature != b"DIRC":
             raise Exception(f"Signature must be \"DIRC\". Instead, it's {signature.decode()}")
-        if version != b"2":
+        if version != 2:
             raise Exception(f"tig only supports version 2. This is an index file of version {version.decode()}")
         
 
@@ -429,8 +560,8 @@ class GitIndex():
             size = int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big")
             curr_pos += 4
 
-            sha = format(int.from_bytes(data[(curr_pos):(curr_pos + 4)], "big"), "040x")
-            curr_pos += 4
+            sha = format(int.from_bytes(data[(curr_pos):(curr_pos + 20)], "big"), "040x")
+            curr_pos += 20
 
             flags = int.from_bytes(data[(curr_pos):(curr_pos + 2)], "big")
             curr_pos += 2
@@ -441,6 +572,7 @@ class GitIndex():
                 raise Exception(f"In version 2, the 'extended' flag must be false.")
             flag_stage = (flags & 0b0011000000000000) # get the third and fourth bits
             flag_name_length = (flags & 0b0000111111111111) # get the last 12 bits
+
 
             if flag_name_length < 0xFFF:
                 if data[(curr_pos + flag_name_length)] != 0x00: # entry path name should be null terminated
