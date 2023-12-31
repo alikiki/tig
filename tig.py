@@ -170,6 +170,21 @@ class Git():
         bytes_index = index.write()
         self.db.set(".git/index", bytes_index)
 
+    def commit(self):
+        pass
+
+    def log(self):
+        pass
+
+    def merge(self):
+        pass
+
+    def pull(self):
+        pass
+
+    def status(self):
+        pass
+
     def checkout(self, commit, working_dir_path):
         """
         Updates working directory with information inside the commit
